@@ -20,6 +20,8 @@ immutable MorletWavelet{T} <: MotherWavelet{T}
 end
 MorletWavelet{T<:Real}(freq::Vector{T}, k0::Real=5.0) =
     MorletWavelet(freq, convert(T, k0), convert(T, (4π)/(k0 + sqrt(2 + k0^2))))
+MorletWavelet{T<:Real}(freq::Range{T}, k0::Real=5.0) =
+    MorletWavelet(collect(freq), convert(T, k0), convert(T, (4π)/(k0 + sqrt(2 + k0^2))))
 
 # Generate daughter wavelet (samples x frequencies)
 function wavebases{T}(w::MorletWavelet{T}, n::Int, fs::Real=1)
@@ -39,6 +41,37 @@ function wavebases{T}(w::MorletWavelet{T}, n::Int, fs::Real=1)
         end
     end
     bases
+end
+
+# Generate daughter wavelets with multiple wave numbers
+# Allows increased freq. precision at higher frequencies
+function wavebases{T}(w::MorletWavelet{T}, n::Int, k0var::Vector{T}, fs::Real=1)
+    df = 2π * fs / n 
+    normconst = sqrt(df) / sqrt(sqrt(π) * n)    
+    bases = Array(T, div(n, 2)+1, length(w.freq))
+    @inbounds begin
+        for k = 1:length(w.freq)
+            nw = MorletWavelet(w.freq,k0var[k])
+            scale = 1/(w.freq[k] * nw.fourierfactor)
+            norm = sqrt(scale) * normconst
+            bases[1, k] = zero(T)
+            for j = 2:size(bases, 1)
+                bases[j, k] = norm * exp(-abs2(scale * df * (j-1) - k0var[k])*0.5)
+            end
+        end
+    end
+    bases
+end
+
+# Allows just giving the min/max number of cycles as a tuple
+function matchfreq2cycle{T}(w::MorletWavelet{T}, minmaxk0::Tuple{Int64,Int64})
+    alignedcycles = minmaxk0[1]:(minmaxk0[2]-minmaxk0[1])/length(w.freq):minmaxk0[2]
+    return floor(collect(alignedcycles)[1:end-1])
+end
+
+function wavebases{T}(w::MorletWavelet{T}, n::Int, minmaxk0::Tuple{Int64,Int64}, fs::Real=1)
+    k0var = matchfreq2cycle(w, minmaxk0)
+    wavebases(w, n, k0var, fs)
 end
 
 fourierfactor{T}(w::MorletWavelet{T}) = w.fourierfactor
@@ -136,6 +169,16 @@ function ContinuousWaveletTransform{T}(w::MotherWavelet{T}, nfft::Int, fs::Real=
     fftout = zeros(Complex{T}, div(nfft, 2)+1)
     ifftwork = zeros(Complex{T}, nfft)
     bases = wavebases(w, nfft, fs)
+    length(coi) == size(bases, 2) || isempty(coi) || error("length of coi must match number of frequencies")
+    ContinuousWaveletTransform(fftin, fftout, ifftwork, bases, coi, plan_rfft(fftin), plan_bfft!(ifftwork))
+end
+
+function ContinuousWaveletTransform{T}(w::MotherWavelet{T}, nfft::Int, minmaxk0::Tuple{Int,Int}, fs::Real=1;
+                                       coi::Vector=scale!(tstd(w), 2*fs))
+    fftin = Array(T, nfft)
+    fftout = zeros(Complex{T}, div(nfft, 2)+1)
+    ifftwork = zeros(Complex{T}, nfft)
+    bases = wavebases(w, nfft, minmaxk0, fs)
     length(coi) == size(bases, 2) || isempty(coi) || error("length of coi must match number of frequencies")
     ContinuousWaveletTransform(fftin, fftout, ifftwork, bases, coi, plan_rfft(fftin), plan_bfft!(ifftwork))
 end
@@ -251,5 +294,10 @@ end
 # Friendly interface to ContinuousWaveletTransform
 function cwt{T<:Real}(signal::Vector{T}, w::MotherWavelet, fs::Real=1)
     t = ContinuousWaveletTransform(w, nextfastfft(length(signal)), fs)
+    evaluate!(Array(Complex{T}, length(signal), size(t.bases, 2)), t, signal)
+end
+
+function cwt{T<:Real}(signal::Vector{T}, w::MotherWavelet, minmaxk0::Tuple{Int,Int}, fs::Real=1)
+    t = ContinuousWaveletTransform(w, nextfastfft(length(signal)), minmaxk0, fs)
     evaluate!(Array(Complex{T}, length(signal), size(t.bases, 2)), t, signal)
 end
