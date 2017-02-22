@@ -83,8 +83,8 @@ cov2coh_work{T}(X::AbstractVector{T}) = Array(T, 1)
 cov2coh_work{T}(X::AbstractMatrix{T}) = Array(T, 1, nchannels(X))
 
 # Fastest possible unsafe submatrix
-immutable ConjFun <: Base.Func{1} end
-call(::ConjFun, x) = conj(x)
+immutable ConjFun <: Function end
+(::ConjFun)(x) = conj(x)
 
 # Check that X and Y have the same number of trials
 chkXY(X, Y) = size(X, 1) == size(Y, 1) ||
